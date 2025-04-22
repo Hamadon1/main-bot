@@ -1,25 +1,25 @@
 import telebot
 import json
 import random
+from flask import Flask, request
 
-TOKEN = '7105177180:AAGvw_qqid-VIVMwGMZIbo3L6cZCYQgj2DY'
-ADMIN_ID = 6862331593 # Telegram ID-и админ
+TOKEN = '7574268255:AAH6pOhS_-SamVqmieHMrh6JV3AV5SjWR1s'
+ADMIN_ID = 6862331593
 
 bot = telebot.TeleBot(TOKEN)
+app = Flask(__name__)
 
-# Сохтани файл агар вуҷуд надорад
+# Загрузка базы
 try:
     with open("data.json", "r") as f:
         db = json.load(f)
 except:
     db = {"movies": {}, "channels": []}
 
-# Захира кардани маълумот
 def save_db():
     with open("data.json", "w") as f:
         json.dump(db, f)
 
-# Санҷиши обуна
 def is_subscribed(user_id):
     for channel in db["channels"]:
         try:
@@ -32,7 +32,6 @@ def is_subscribed(user_id):
             return False
     return True
 
-# Фармони /start
 @bot.message_handler(commands=["start"])
 def start(msg):
     if is_subscribed(msg.chat.id):
@@ -44,7 +43,6 @@ def start(msg):
         markup.add(telebot.types.InlineKeyboardButton("Санҷиш", callback_data="check_sub"))
         bot.send_message(msg.chat.id, "Аввал ба каналҳо обуна шавед:", reply_markup=markup)
 
-# Callback барои санҷиш
 @bot.callback_query_handler(func=lambda call: call.data == "check_sub")
 def check_sub(call):
     if is_subscribed(call.message.chat.id):
@@ -52,7 +50,6 @@ def check_sub(call):
     else:
         bot.send_message(call.message.chat.id, "Лутфан аввал обуна шавед.")
 
-# Фармони /panel
 @bot.message_handler(commands=["panel"])
 def panel(msg):
     if msg.from_user.id == ADMIN_ID:
@@ -61,7 +58,6 @@ def panel(msg):
         markup.add("❌ Нест кардани Филм", "❌ Нест кардани Канал")
         bot.send_message(msg.chat.id, "Панели админ:", reply_markup=markup)
 
-# Ҳолат барои филм ё канал
 user_states = {}
 movie_info_temp = {}
 
@@ -102,18 +98,14 @@ def save_movie(msg):
 
 @bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == "waiting_for_movie_info")
 def add_movie_info(msg):
-    movie_info = ""
-    if msg.text != "/skip":
-        movie_info = msg.text
-    
+    movie_info = "" if msg.text == "/skip" else msg.text
     movie_id = movie_info_temp[msg.chat.id]["id"]
     file_id = movie_info_temp[msg.chat.id]["file_id"]
-    
+
     db["movies"][movie_id] = {
         "file_id": file_id,
         "info": movie_info
     }
-    
     save_db()
     bot.send_message(msg.chat.id, f"Филм сабт шуд. Қулф ID: {movie_id}")
     user_states.pop(msg.chat.id)
@@ -151,7 +143,6 @@ def process_delete_channel(msg):
         bot.send_message(msg.chat.id, "Лутфан рақами каналро фиристед.")
     user_states.pop(msg.chat.id)
 
-# Корбари оддӣ ID мефиристад
 @bot.message_handler(func=lambda msg: msg.text.isdigit() and len(msg.text) == 4)
 def send_movie(msg):
     movie_id = msg.text
@@ -166,5 +157,24 @@ def send_movie(msg):
     else:
         start(msg)
 
-# Запуск
-bot.infinity_polling()
+# Роҳбарии веб-сервер
+@app.route('/')
+def index():
+    return 'Bot is working!'
+
+@app.route('/' + TOKEN, methods=['POST'])
+def webhook():
+    json_string = request.get_data().decode('utf-8')
+    update = telebot.types.Update.de_json(json_string)
+    bot.process_new_updates([update])
+    return 'ok', 200
+
+@app.route('/setwebhook', methods=['GET'])
+def set_webhook():
+    webhook_url = f"https://main-bot-7ydv.onrender.com/{TOKEN}"
+    bot.remove_webhook()
+    bot.set_webhook(url=webhook_url)
+    return "Webhook set!"
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
