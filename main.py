@@ -58,10 +58,12 @@ def panel(msg):
     if msg.from_user.id == ADMIN_ID:
         markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
         markup.add("➕ Иловаи Филм", "➕ Иловаи Канал")
+        markup.add("❌ Нест кардани Филм", "❌ Нест кардани Канал")
         bot.send_message(msg.chat.id, "Панели админ:", reply_markup=markup)
 
 # Ҳолат барои филм ё канал
 user_states = {}
+movie_info_temp = {}
 
 @bot.message_handler(func=lambda msg: msg.text == "➕ Иловаи Филм" and msg.from_user.id == ADMIN_ID)
 def add_movie(msg):
@@ -73,14 +75,49 @@ def add_channel(msg):
     user_states[msg.chat.id] = "waiting_for_channel"
     bot.send_message(msg.chat.id, "Номи канал ё линкро фиристед (масалан: @channel):")
 
+@bot.message_handler(func=lambda msg: msg.text == "❌ Нест кардани Филм" and msg.from_user.id == ADMIN_ID)
+def delete_movie(msg):
+    user_states[msg.chat.id] = "waiting_for_delete_movie"
+    bot.send_message(msg.chat.id, "ID филмро барои нест кардан фиристед:")
+
+@bot.message_handler(func=lambda msg: msg.text == "❌ Нест кардани Канал" and msg.from_user.id == ADMIN_ID)
+def delete_channel(msg):
+    if db["channels"]:
+        user_states[msg.chat.id] = "waiting_for_delete_channel"
+        channel_list = "\n".join([f"{i+1}. {ch}" for i, ch in enumerate(db["channels"])])
+        bot.send_message(msg.chat.id, f"Рақами каналро барои нест кардан интихоб кунед:\n{channel_list}")
+    else:
+        bot.send_message(msg.chat.id, "Ягон канал ёфт нашуд.")
+
 @bot.message_handler(content_types=["video"])
 def save_movie(msg):
     if user_states.get(msg.chat.id) == "waiting_for_movie":
         movie_id = str(random.randint(1000, 9999))
-        db["movies"][movie_id] = msg.video.file_id
-        save_db()
-        bot.send_message(msg.chat.id, f"Филм сабт шуд. Қулф ID: {movie_id}")
-        user_states.pop(msg.chat.id)
+        movie_info_temp[msg.chat.id] = {
+            "id": movie_id,
+            "file_id": msg.video.file_id
+        }
+        user_states[msg.chat.id] = "waiting_for_movie_info"
+        bot.send_message(msg.chat.id, "Лутфан маълумоти филмро фиристед ё /skip:")
+
+@bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == "waiting_for_movie_info")
+def add_movie_info(msg):
+    movie_info = ""
+    if msg.text != "/skip":
+        movie_info = msg.text
+    
+    movie_id = movie_info_temp[msg.chat.id]["id"]
+    file_id = movie_info_temp[msg.chat.id]["file_id"]
+    
+    db["movies"][movie_id] = {
+        "file_id": file_id,
+        "info": movie_info
+    }
+    
+    save_db()
+    bot.send_message(msg.chat.id, f"Филм сабт шуд. Қулф ID: {movie_id}")
+    user_states.pop(msg.chat.id)
+    movie_info_temp.pop(msg.chat.id)
 
 @bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == "waiting_for_channel")
 def save_channel(msg):
@@ -89,13 +126,41 @@ def save_channel(msg):
     bot.send_message(msg.chat.id, f"Канал '{msg.text}' сабт шуд.")
     user_states.pop(msg.chat.id)
 
+@bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == "waiting_for_delete_movie")
+def process_delete_movie(msg):
+    movie_id = msg.text
+    if movie_id in db["movies"]:
+        db["movies"].pop(movie_id)
+        save_db()
+        bot.send_message(msg.chat.id, f"Филм бо ID {movie_id} нест карда шуд.")
+    else:
+        bot.send_message(msg.chat.id, "Филм бо чунин ID ёфт нашуд.")
+    user_states.pop(msg.chat.id)
+
+@bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == "waiting_for_delete_channel")
+def process_delete_channel(msg):
+    try:
+        index = int(msg.text) - 1
+        if 0 <= index < len(db["channels"]):
+            deleted_channel = db["channels"].pop(index)
+            save_db()
+            bot.send_message(msg.chat.id, f"Канал '{deleted_channel}' нест карда шуд.")
+        else:
+            bot.send_message(msg.chat.id, "Рақами канал нодуруст аст.")
+    except ValueError:
+        bot.send_message(msg.chat.id, "Лутфан рақами каналро фиристед.")
+    user_states.pop(msg.chat.id)
+
 # Корбари оддӣ ID мефиристад
 @bot.message_handler(func=lambda msg: msg.text.isdigit() and len(msg.text) == 4)
 def send_movie(msg):
     movie_id = msg.text
     if is_subscribed(msg.chat.id):
         if movie_id in db["movies"]:
-            bot.send_video(msg.chat.id, db["movies"][movie_id])
+            movie_data = db["movies"][movie_id]
+            bot.send_video(msg.chat.id, movie_data["file_id"])
+            if movie_data["info"]:
+                bot.send_message(msg.chat.id, movie_data["info"])
         else:
             bot.send_message(msg.chat.id, "Филм ёфт нашуд.")
     else:
