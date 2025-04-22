@@ -7,9 +7,8 @@ TOKEN = '7574268255:AAH6pOhS_-SamVqmieHMrh6JV3AV5SjWR1s'
 ADMIN_ID = 6862331593
 
 bot = telebot.TeleBot(TOKEN)
-app = Flask(__name__)
 
-# Загрузка базы
+# Файли база
 try:
     with open("data.json", "r") as f:
         db = json.load(f)
@@ -64,7 +63,7 @@ movie_info_temp = {}
 @bot.message_handler(func=lambda msg: msg.text == "➕ Иловаи Филм" and msg.from_user.id == ADMIN_ID)
 def add_movie(msg):
     user_states[msg.chat.id] = "waiting_for_movie"
-    bot.send_message(msg.chat.id, "Лутфан филмро фиристед:")
+    bot.send_message(msg.chat.id, "Филмро фиристед:")
 
 @bot.message_handler(func=lambda msg: msg.text == "➕ Иловаи Канал" and msg.from_user.id == ADMIN_ID)
 def add_channel(msg):
@@ -83,7 +82,7 @@ def delete_channel(msg):
         channel_list = "\n".join([f"{i+1}. {ch}" for i, ch in enumerate(db["channels"])])
         bot.send_message(msg.chat.id, f"Рақами каналро барои нест кардан интихоб кунед:\n{channel_list}")
     else:
-        bot.send_message(msg.chat.id, "Ягон канал ёфт нашуд.")
+        bot.send_message(msg.chat.id, "Ягон канал нест.")
 
 @bot.message_handler(content_types=["video"])
 def save_movie(msg):
@@ -94,7 +93,7 @@ def save_movie(msg):
             "file_id": msg.video.file_id
         }
         user_states[msg.chat.id] = "waiting_for_movie_info"
-        bot.send_message(msg.chat.id, "Лутфан маълумоти филмро фиристед ё /skip:")
+        bot.send_message(msg.chat.id, "Маълумоти иловагӣ? /skip агар надорӣ:")
 
 @bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == "waiting_for_movie_info")
 def add_movie_info(msg):
@@ -126,7 +125,7 @@ def process_delete_movie(msg):
         save_db()
         bot.send_message(msg.chat.id, f"Филм бо ID {movie_id} нест карда шуд.")
     else:
-        bot.send_message(msg.chat.id, "Филм бо чунин ID ёфт нашуд.")
+        bot.send_message(msg.chat.id, "Филм ёфт нашуд.")
     user_states.pop(msg.chat.id)
 
 @bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == "waiting_for_delete_channel")
@@ -140,7 +139,7 @@ def process_delete_channel(msg):
         else:
             bot.send_message(msg.chat.id, "Рақами канал нодуруст аст.")
     except ValueError:
-        bot.send_message(msg.chat.id, "Лутфан рақами каналро фиристед.")
+        bot.send_message(msg.chat.id, "Рақам фирист.")
     user_states.pop(msg.chat.id)
 
 @bot.message_handler(func=lambda msg: msg.text.isdigit() and len(msg.text) == 4)
@@ -157,24 +156,18 @@ def send_movie(msg):
     else:
         start(msg)
 
-# Роҳбарии веб-сервер
-@app.route('/')
-def index():
-    return 'Bot is working!'
+# === WEBHOOK (Flask) ===
+app = Flask(__name__)
 
-@app.route('/' + TOKEN, methods=['POST'])
+@app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
-    json_string = request.get_data().decode('utf-8')
-    update = telebot.types.Update.de_json(json_string)
+    update = telebot.types.Update.de_json(request.data.decode("utf-8"))
     bot.process_new_updates([update])
-    return 'ok', 200
+    return "!", 200
 
-@app.route('/setwebhook', methods=['GET'])
-def set_webhook():
-    webhook_url = f"https://main-bot-7ydv.onrender.com/{TOKEN}"
-    bot.remove_webhook()
-    bot.set_webhook(url=webhook_url)
-    return "Webhook set!"
+@app.route("/")
+def index():
+    return "Bot is live"
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
