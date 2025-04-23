@@ -1,14 +1,15 @@
+from flask import Flask, request
 import telebot
 import json
 import random
-from flask import Flask, request
 
-TOKEN = '7574268255:AAH6pOhS_-SamVqmieHMrh6JV3AV5SjWR1s'
-ADMIN_ID = 6862331593
+TOKEN = '7105177180:AAGvw_qqid-VIVMwGMZIbo3L6cZCYQgj2DY'
+ADMIN_ID = 6862331593  # Telegram ID-и админ
 
 bot = telebot.TeleBot(TOKEN)
+app = Flask(__name__)
 
-# Файли база
+# Базаи маълумот
 try:
     with open("data.json", "r") as f:
         db = json.load(f)
@@ -31,6 +32,21 @@ def is_subscribed(user_id):
             return False
     return True
 
+user_states = {}
+movie_info_temp = {}
+
+# Роут барои webhook
+@app.route(f'/{TOKEN}', methods=['POST'])
+def webhook():
+    update = telebot.types.Update.de_json(request.stream.read().decode("utf-8"))
+    bot.process_new_updates([update])
+    return 'ok', 200
+
+@app.route('/')
+def index():
+    return "Bot is running!", 200
+
+# Хандлерҳо
 @bot.message_handler(commands=["start"])
 def start(msg):
     if is_subscribed(msg.chat.id):
@@ -57,43 +73,37 @@ def panel(msg):
         markup.add("❌ Нест кардани Филм", "❌ Нест кардани Канал")
         bot.send_message(msg.chat.id, "Панели админ:", reply_markup=markup)
 
-user_states = {}
-movie_info_temp = {}
-
 @bot.message_handler(func=lambda msg: msg.text == "➕ Иловаи Филм" and msg.from_user.id == ADMIN_ID)
 def add_movie(msg):
     user_states[msg.chat.id] = "waiting_for_movie"
-    bot.send_message(msg.chat.id, "Филмро фиристед:")
+    bot.send_message(msg.chat.id, "Филмро равон кунед:")
 
 @bot.message_handler(func=lambda msg: msg.text == "➕ Иловаи Канал" and msg.from_user.id == ADMIN_ID)
 def add_channel(msg):
     user_states[msg.chat.id] = "waiting_for_channel"
-    bot.send_message(msg.chat.id, "Номи канал ё линкро фиристед (масалан: @channel):")
+    bot.send_message(msg.chat.id, "Номи каналро равон кунед (мисол: @kanal):")
 
 @bot.message_handler(func=lambda msg: msg.text == "❌ Нест кардани Филм" and msg.from_user.id == ADMIN_ID)
 def delete_movie(msg):
     user_states[msg.chat.id] = "waiting_for_delete_movie"
-    bot.send_message(msg.chat.id, "ID филмро барои нест кардан фиристед:")
+    bot.send_message(msg.chat.id, "ID-и филмро нависед барои нест кардан:")
 
 @bot.message_handler(func=lambda msg: msg.text == "❌ Нест кардани Канал" and msg.from_user.id == ADMIN_ID)
 def delete_channel(msg):
     if db["channels"]:
         user_states[msg.chat.id] = "waiting_for_delete_channel"
-        channel_list = "\n".join([f"{i+1}. {ch}" for i, ch in enumerate(db["channels"])])
-        bot.send_message(msg.chat.id, f"Рақами каналро барои нест кардан интихоб кунед:\n{channel_list}")
+        chs = "\n".join([f"{i+1}. {ch}" for i, ch in enumerate(db["channels"])])
+        bot.send_message(msg.chat.id, f"Ин рақамро нависед:\n{chs}")
     else:
-        bot.send_message(msg.chat.id, "Ягон канал нест.")
+        bot.send_message(msg.chat.id, "Канал ёфт нашуд.")
 
 @bot.message_handler(content_types=["video"])
 def save_movie(msg):
     if user_states.get(msg.chat.id) == "waiting_for_movie":
         movie_id = str(random.randint(1000, 9999))
-        movie_info_temp[msg.chat.id] = {
-            "id": movie_id,
-            "file_id": msg.video.file_id
-        }
+        movie_info_temp[msg.chat.id] = {"id": movie_id, "file_id": msg.video.file_id}
         user_states[msg.chat.id] = "waiting_for_movie_info"
-        bot.send_message(msg.chat.id, "Маълумоти иловагӣ? /skip агар надорӣ:")
+        bot.send_message(msg.chat.id, "Маълумоти филмро равон кунед ё /skip нависед:")
 
 @bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == "waiting_for_movie_info")
 def add_movie_info(msg):
@@ -101,12 +111,9 @@ def add_movie_info(msg):
     movie_id = movie_info_temp[msg.chat.id]["id"]
     file_id = movie_info_temp[msg.chat.id]["file_id"]
 
-    db["movies"][movie_id] = {
-        "file_id": file_id,
-        "info": movie_info
-    }
+    db["movies"][movie_id] = {"file_id": file_id, "info": movie_info}
     save_db()
-    bot.send_message(msg.chat.id, f"Филм сабт шуд. Қулф ID: {movie_id}")
+    bot.send_message(msg.chat.id, f"Сабт шуд. Қулф ID: {movie_id}")
     user_states.pop(msg.chat.id)
     movie_info_temp.pop(msg.chat.id)
 
@@ -114,7 +121,7 @@ def add_movie_info(msg):
 def save_channel(msg):
     db["channels"].append(msg.text)
     save_db()
-    bot.send_message(msg.chat.id, f"Канал '{msg.text}' сабт шуд.")
+    bot.send_message(msg.chat.id, f"Канал {msg.text} сабт шуд.")
     user_states.pop(msg.chat.id)
 
 @bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == "waiting_for_delete_movie")
@@ -123,7 +130,7 @@ def process_delete_movie(msg):
     if movie_id in db["movies"]:
         db["movies"].pop(movie_id)
         save_db()
-        bot.send_message(msg.chat.id, f"Филм бо ID {movie_id} нест карда шуд.")
+        bot.send_message(msg.chat.id, "Филм нест шуд.")
     else:
         bot.send_message(msg.chat.id, "Филм ёфт нашуд.")
     user_states.pop(msg.chat.id)
@@ -133,13 +140,13 @@ def process_delete_channel(msg):
     try:
         index = int(msg.text) - 1
         if 0 <= index < len(db["channels"]):
-            deleted_channel = db["channels"].pop(index)
+            ch = db["channels"].pop(index)
             save_db()
-            bot.send_message(msg.chat.id, f"Канал '{deleted_channel}' нест карда шуд.")
+            bot.send_message(msg.chat.id, f"{ch} нест шуд.")
         else:
-            bot.send_message(msg.chat.id, "Рақами канал нодуруст аст.")
-    except ValueError:
-        bot.send_message(msg.chat.id, "Рақам фирист.")
+            bot.send_message(msg.chat.id, "Рақам нодуруст.")
+    except:
+        bot.send_message(msg.chat.id, "Лутфан рақам нависед.")
     user_states.pop(msg.chat.id)
 
 @bot.message_handler(func=lambda msg: msg.text.isdigit() and len(msg.text) == 4)
@@ -147,27 +154,18 @@ def send_movie(msg):
     movie_id = msg.text
     if is_subscribed(msg.chat.id):
         if movie_id in db["movies"]:
-            movie_data = db["movies"][movie_id]
-            bot.send_video(msg.chat.id, movie_data["file_id"])
-            if movie_data["info"]:
-                bot.send_message(msg.chat.id, movie_data["info"])
+            data = db["movies"][movie_id]
+            bot.send_video(msg.chat.id, data["file_id"])
+            if data["info"]:
+                bot.send_message(msg.chat.id, data["info"])
         else:
             bot.send_message(msg.chat.id, "Филм ёфт нашуд.")
     else:
         start(msg)
 
-# === WEBHOOK (Flask) ===
-app = Flask(__name__)
-
-@app.route(f"/{TOKEN}", methods=["POST"])
-def webhook():
-    update = telebot.types.Update.de_json(request.data.decode("utf-8"))
-    bot.process_new_updates([update])
-    return "!", 200
-
-@app.route("/")
-def index():
-    return "Bot is live"
+# Webhook-ро насб мекунем
+bot.remove_webhook()
+bot.set_webhook(url=f"https://main-bot-7ydv.onrender.com/7105177180:AAGvw_qqid-VIVMwGMZIbo3L6cZCYQgj2DY")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
