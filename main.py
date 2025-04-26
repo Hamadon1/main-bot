@@ -5,7 +5,7 @@ import random
 import os
 from datetime import datetime
 
-TOKEN = '7105177180:AAGvw_qqid-VIVMwGMZIbo3L6cZCYQgj2DY'
+TOKEN = '7613948633:AAG-79EzTxKU_9-ZQrWcs78dUJU6xxy6KKY'
 ADMIN_ID = 6862331593  # Telegram ID-и админ
 
 bot = telebot.TeleBot(TOKEN)
