@@ -84,6 +84,39 @@ def index():
 def start(msg):
     register_user(msg.from_user)
     
+    # Санҷед, ки оё стартовый параметр дорад
+    if len(msg.text.split()) > 1:
+        # Гирифтани movie_id аз параметр
+        deep_link_param = msg.text.split()[1]
+        movie_id = deep_link_param
+        
+        if movie_id in db["movies"]:
+            if is_subscribed(msg.chat.id):
+                # Фиристодани филм
+                send_movie_to_user(msg.chat.id, movie_id)
+            else:
+                # Талаби обуна
+                markup = telebot.types.InlineKeyboardMarkup()
+                for ch in db["channels"]:
+                    ch_name = ch.replace('@', '')
+                    try:
+                        chat_info = bot.get_chat(ch)
+                        title = chat_info.title
+                        markup.add(telebot.types.InlineKeyboardButton(f"📢 {title}", url=f"https://t.me/{ch_name}"))
+                    except:
+                        markup.add(telebot.types.InlineKeyboardButton(f"📢 {ch}", url=f"https://t.me/{ch_name}"))
+                
+                # Иловаи тугмаи санҷиш бо movie_id
+                markup.add(telebot.types.InlineKeyboardButton("✅ Тафтиши обуна", callback_data=f"check_sub_{movie_id}"))
+                
+                bot.send_message(
+                    msg.chat.id, 
+                    "⚠️ Барои дидани филм аввал ба каналҳои мо обуна шавед:",
+                    reply_markup=markup
+                )
+            return
+    
+    # Идомаи функсияи оддии старт
     if is_subscribed(msg.chat.id):
         markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
         markup.add("🎬 Филмҳои нав", "🔎 Ҷустуҷӯи филм")
@@ -112,6 +145,77 @@ def start(msg):
             msg.chat.id, 
             "⚠️ Барои истифодаи бот аввал ба каналҳои мо обуна шавед:",
             reply_markup=markup
+        )
+
+# Функсия барои фиристодани филм ба корбар
+def send_movie_to_user(chat_id, movie_id):
+    movie_data = db["movies"][movie_id]
+    
+    # Зиёд кардани шумораи тамошо
+    db["movies"][movie_id]["views"] = movie_data.get("views", 0) + 1
+    db["stats"]["total_views"] += 1
+    
+    # Навсозии омори корбар
+    user_id = str(chat_id)
+    if user_id in db["users"]:
+        db["users"][user_id]["movies_watched"] = db["users"][user_id].get("movies_watched", 0) + 1
+    
+    save_db()
+    
+    # Тайёр кардани маълумот барои нишон додан
+    title = movie_data.get("title", "Бе ном")
+    info = movie_data.get("info", "Маълумот мавҷуд нест")
+    file_id = movie_data.get("file_id")
+    views = movie_data.get("views", 0)
+    
+    # Ҳисоб кардани давомнокӣ
+    duration = movie_data.get("duration", 0)
+    duration_min = int(duration / 60)
+    duration_sec = duration % 60
+    
+    # Нишон додани филм
+    caption = f"🎬 *{title}*\n\n"
+    caption += f"⏱ *Давомнокӣ:* {duration_min}:{duration_sec:02d}\n"
+    caption += f"👁 *Тамошоҳо:* {views}\n\n"
+    caption += f"📝 *Маълумот:*\n{info}"
+    
+    try:
+        bot.send_video(
+            chat_id,
+            file_id,
+            caption=caption,
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        bot.send_message(
+            chat_id,
+            f"❌ Хатогӣ ҳангоми фиристодани видео: {e}"
+        )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("check_sub_"))
+def check_sub_with_movie(call):
+    movie_id = call.data.split("_")[2]
+    
+    if is_subscribed(call.message.chat.id):
+        # Фиристодани филм
+        if movie_id in db["movies"]:
+            bot.edit_message_text(
+                "✅ Офарин! Шумо ба ҳамаи каналҳо обуна шудед.",
+                call.message.chat.id,
+                call.message.message_id
+            )
+            send_movie_to_user(call.message.chat.id, movie_id)
+        else:
+            bot.edit_message_text(
+                "❌ Бахшиш, филм ёфт нашуд.",
+                call.message.chat.id,
+                call.message.message_id
+            )
+    else:
+        bot.answer_callback_query(
+            call.id,
+            "❌ Шумо ҳанӯз обуна нашудаед. Лутфан, ба ҳамаи каналҳо обуна шавед!",
+            show_alert=True
         )
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_sub")
@@ -466,11 +570,11 @@ def add_movie_title(msg):
     bot.send_message(
         msg.chat.id, 
         "📋 Маълумоти филмро равон кунед ё /skip нависед:\n\n"
-        "Мисол: Жанр, сол, режиссёр, актёрон ва ғайра",
+        "Мисол: Жанр, сол, режиссёр, актёрҳо ва ғайра",
         reply_markup=markup
     )
 
-# Қабули маълумоти филм
+# Қабули маълумот дар бораи филм
 @bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == "waiting_for_movie_info")
 def add_movie_info(msg):
     if msg.text == "🔙 Бекор кардан":
@@ -479,133 +583,117 @@ def add_movie_info(msg):
         user_states.pop(msg.chat.id)
         panel(msg)
         return
+        
+    if msg.text == "/skip":
+        movie_info_temp[msg.chat.id]["info"] = "Маълумот дастрас нест"
+    else:
+        movie_info_temp[msg.chat.id]["info"] = msg.text
     
-    movie_info = "" if msg.text == "/skip" else msg.text
-    movie_data = movie_info_temp[msg.chat.id]
-    movie_id = movie_data["id"]
-    
-    # Сохтани объекти филм бо маълумоти пурра
+    # Сохранение фильма в БД
+    movie_id = movie_info_temp[msg.chat.id]["id"]
     db["movies"][movie_id] = {
-        "file_id": movie_data["file_id"],
-        "title": movie_data["title"],
-        "info": movie_info,
-        "file_size": movie_data["file_size"],
-        "duration": movie_data["duration"],
-        "width": movie_data["width"],
-        "height": movie_data["height"],
-        "added_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "views": 0
+        "title": movie_info_temp[msg.chat.id]["title"],
+        "info": movie_info_temp[msg.chat.id]["info"],
+        "file_id": movie_info_temp[msg.chat.id]["file_id"],
+        "file_size": movie_info_temp[msg.chat.id]["file_size"],
+        "duration": movie_info_temp[msg.chat.id]["duration"],
+        "width": movie_info_temp[msg.chat.id]["width"],
+        "height": movie_info_temp[msg.chat.id]["height"],
+        "views": 0,
+        "added_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
-    
     save_db()
     
-    # Нишон додани маълумот
-    movie_size_mb = round(movie_data["file_size"] / (1024 * 1024), 2)
-    duration_min = int(movie_data["duration"] / 60)
-    duration_sec = movie_data["duration"] % 60
-    
-    user_states.pop(msg.chat.id)
-    movie_info_temp.pop(msg.chat.id)
+    # Создание пригласительной ссылки
+    invite_link = f"https://t.me/{bot.get_me().username}?start={movie_id}"
     
     bot.send_message(
         msg.chat.id, 
-        f"✅ Филм бо муваффақият сабт шуд!\n\n"
-        f"📌 *Номи филм:* {movie_data['title']}\n"
-        f"🔑 *Қулф ID:* `{movie_id}`\n"
-        f"⏱ *Давомнокӣ:* {duration_min}:{duration_sec:02d}\n"
-        f"📊 *Ҳаҷм:* {movie_size_mb} MB\n"
-        f"📋 *Маълумот:* {movie_info if movie_info else 'Нест'}",
+        f"✅ Филм бо муваффақият илова карда шуд!\n\n"
+        f"🎬 *{movie_info_temp[msg.chat.id]['title']}*\n"
+        f"🔑 ID: `{movie_id}`\n\n"
+        f"🔗 Пайванд барои дастрасӣ:\n`{invite_link}`",
         parse_mode="Markdown"
     )
     
-    # Бозгашт ба панели асосӣ
+    # Очистка временных данных
+    movie_info_temp.pop(msg.chat.id)
+    user_states.pop(msg.chat.id)
+    
+    # Возвращение к панели администратора
     panel(msg)
 
-# Қабули канал
+# Қабули номи канал
 @bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == "waiting_for_channel")
-def save_channel(msg):
+def add_channel_handler(msg):
     if msg.text == "🔙 Бекор кардан":
         user_states.pop(msg.chat.id)
         panel(msg)
         return
+        
+    channel = msg.text.strip()
     
-    channel = msg.text
-    
-    # Агар @ надошта бошад, илова кунед
-    if not channel.startswith('@'):
-        channel = '@' + channel
-    
-    # Агар канал аллакай дар рӯйхат бошад
-    if channel in db["channels"]:
-        bot.send_message(msg.chat.id, f"⚠️ Канали {channel} аллакай дар рӯйхат мавҷуд аст!")
-        user_states.pop(msg.chat.id)
-        panel(msg)
+    # Проверка формата
+    if not (channel.startswith("@") or channel.startswith("-100")):
+        bot.send_message(
+            msg.chat.id, 
+            "❌ Формати номи канал нодуруст аст. Намуна: @channel ё -100123456789"
+        )
         return
     
-    # Санҷидани дуруст будани канал
+    # Проверка на дубликаты
+    if channel in db["channels"]:
+        bot.send_message(
+            msg.chat.id, 
+            "❌ Ин канал аллакай дар рӯйхат мавҷуд аст!"
+        )
+        return
+    
+    # Проверка доступа к каналу
     try:
-        bot.get_chat(channel)
+        chat_info = bot.get_chat(channel)
+        bot_member = bot.get_chat_member(channel, bot.get_me().id)
+        
+        if bot_member.status not in ['administrator']:
+            bot.send_message(
+                msg.chat.id, 
+                "❌ Бот бояд дар канали зикршуда админ бошад!"
+            )
+            return
+            
+        # Добавление канала в БД
         db["channels"].append(channel)
         save_db()
-        bot.send_message(msg.chat.id, f"✅ Канали {channel} бо муваффақият сабт шуд!")
+        
+        bot.send_message(
+            msg.chat.id, 
+            f"✅ Канал \"{chat_info.title}\" ({channel}) бо муваффақият илова карда шуд!"
+        )
+        
+        # Возвращаем админ-панель
+        panel(msg)
+        
     except Exception as e:
         bot.send_message(
             msg.chat.id, 
-            f"❌ Хатогӣ ҳангоми илова кардани канал: {e}\n\n"
-            f"Мутмаин шавед, ки канал мавҷуд аст ва бот дар он админ мебошад."
+            f"❌ Хатогӣ ҳангоми тафтиши канал: {e}\n\n"
+            "Шумо бояд аввал ботро ба канал ҳамчун админ илова кунед."
         )
-    
-    user_states.pop(msg.chat.id)
-    panel(msg)
-
-# Филмҳои нав
-@bot.message_handler(func=lambda msg: msg.text == "🎬 Филмҳои нав")
-def new_movies(msg):
-    if not is_subscribed(msg.chat.id):
-        start(msg)
-        return
-    
-    if not db["movies"]:
-        bot.send_message(msg.chat.id, "❌ Ҳоло ягон филм дар бот мавҷуд нест.")
-        return
-    
-    # Мураттабсозии филмҳо аз рӯи сана
-    sorted_movies = sorted(
-        db["movies"].items(),
-        key=lambda x: x[1].get("added_date", "2000-01-01"),
-        reverse=True
-    )
-    
-    # Нишон додани 5 филми охирин
-    latest_movies = sorted_movies[:5]
-    
-    message = "🎬 *5 филми охирин:*\n\n"
-    
-    for movie_id, movie_data in latest_movies:
-        title = movie_data.get("title", "Бе ном")
-        views = movie_data.get("views", 0)
-        date = movie_data.get("added_date", "Номаълум")
         
-        message += f"🎬 *{title}*\n"
-        message += f"🔑 ID: `{movie_id}`\n"
-        message += f"📅 Илова шуд: {date[:10]}\n"
-        message += f"👁 Тамошоҳо: {views}\n\n"
-    
-    message += "Барои дидани филм ID-ро нависед."
-    
-    bot.send_message(msg.chat.id, message, parse_mode="Markdown")
+    # Очистка состояния
+    user_states.pop(msg.chat.id)
 
 # Ҷустуҷӯи филм
 @bot.message_handler(func=lambda msg: msg.text == "🔎 Ҷустуҷӯи филм")
 def search_movie(msg):
     if not is_subscribed(msg.chat.id):
-        start(msg)
+        start(msg)  # Redirect to subscription check
         return
-    
+        
     user_states[msg.chat.id] = "waiting_for_search_query"
     
     markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add("🔙 Бекор кардан")
+    markup.add("🔙 Бозгашт ба меню")
     
     bot.send_message(
         msg.chat.id, 
@@ -613,162 +701,233 @@ def search_movie(msg):
         reply_markup=markup
     )
 
-# Коркарди ҷустуҷӯ
-@bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == "waiting_for_search_query")
-def process_search(msg):
-    if msg.text == "🔙 Бекор кардан":
-        user_states.pop(msg.chat.id)
-        start(msg)
+# Филмҳои нав
+@bot.message_handler(func=lambda msg: msg.text == "🎬 Филмҳои нав")
+def new_movies(msg):
+    if not is_subscribed(msg.chat.id):
+        start(msg)  # Redirect to subscription check
         return
     
-    query = msg.text.lower()
-    results = []
+    if not db["movies"]:
+        bot.send_message(msg.chat.id, "❌ Дар айни ҳол филмҳо мавҷуд нестанд.")
+        return
+        
+    # Гирифтани филмҳои охирин (то 10-то)
+    movies = sorted(
+        db["movies"].items(),
+        key=lambda x: datetime.strptime(x[1].get("added_date", "2000-01-01 00:00:00"), "%Y-%m-%d %H:%M:%S"),
+        reverse=True
+    )[:10]
     
-    for movie_id, movie_data in db["movies"].items():
-        title = movie_data.get("title", "").lower()
-        info = movie_data.get("info", "").lower()
+    if not movies:
+        bot.send_message(msg.chat.id, "❌ Дар айни ҳол филмҳо мавҷуд нестанд.")
+        return
         
-        if query in title or query in info:
-            results.append((movie_id, movie_data))
+    markup = telebot.types.InlineKeyboardMarkup()
     
-    if results:
-        message = f"🔎 *Натиҷаҳои ҷустуҷӯ барои '{msg.text}'*:\n\n"
-        
-        for movie_id, movie_data in results[:10]:  # Танҳо 10 натиҷаи аввал
-            title = movie_data.get("title", "Бе ном")
-            views = movie_data.get("views", 0)
-            
-            message += f"🎬 *{title}*\n"
-            message += f"🔑 ID: `{movie_id}`\n"
-            message += f"👁 Тамошоҳо: {views}\n\n"
-        
-        if len(results) > 10:
-            message += f"... ва боз {len(results) - 10} натиҷа.\n\n"
-            
-        message += "Барои дидани филм ID-ро нависед."
-        
-        bot.send_message(msg.chat.id, message, parse_mode="Markdown")
-    else:
-        bot.send_message(
-            msg.chat.id, 
-            f"❌ Ягон филм бо калимаи '{msg.text}' ёфт нашуд.\n\n"
-            "Лутфан, бо калимаҳои дигар кӯшиш кунед."
-        )
+    for movie_id, movie_data in movies:
+        title = movie_data.get("title", "Бе ном")
+        markup.add(telebot.types.InlineKeyboardButton(
+            f"🎬 {title}", 
+            callback_data=f"watch_{movie_id}"
+        ))
     
-    user_states.pop(msg.chat.id)
+    bot.send_message(
+        msg.chat.id, 
+        "🎬 Филмҳои нав дар бот:",
+        reply_markup=markup
+    )
 
 # Омори ман
 @bot.message_handler(func=lambda msg: msg.text == "📊 Омори ман")
 def user_stats(msg):
     if not is_subscribed(msg.chat.id):
-        start(msg)
+        start(msg)  # Redirect to subscription check
         return
-    
-    user_id = str(msg.from_user.id)
+        
+    user_id = str(msg.chat.id)
     
     if user_id in db["users"]:
         user_data = db["users"][user_id]
-        joined_date = user_data.get("joined_date", "Номаълум")
         movies_watched = user_data.get("movies_watched", 0)
+        join_date = datetime.strptime(user_data.get("joined_date", "2000-01-01 00:00:00"), "%Y-%m-%d %H:%M:%S")
+        days_since_join = (datetime.now() - join_date).days
         
         bot.send_message(
             msg.chat.id,
             f"📊 *Омори шумо:*\n\n"
-            f"📅 *Аъзо шудаед аз:* {joined_date[:10]}\n"
+            f"👤 *ID-и шумо:* `{user_id}`\n"
+            f"📅 *Санаи пайвастшавӣ:* {join_date.strftime('%Y-%m-%d')}\n"
+            f"⏱ *Рӯзҳо дар бот:* {days_since_join}\n"
             f"🎬 *Филмҳои тамошокарда:* {movies_watched}",
             parse_mode="Markdown"
         )
     else:
-        bot.send_message(msg.chat.id, "❌ Маълумот дар бораи шумо ёфт нашуд.")
+        bot.send_message(
+            msg.chat.id,
+            "❌ Маълумот дар бораи шумо ёфт нашуд!"
+        )
 
 # Дастурамал
 @bot.message_handler(func=lambda msg: msg.text == "ℹ️ Дастурамал")
 def instructions(msg):
     if not is_subscribed(msg.chat.id):
-        start(msg)
+        start(msg)  # Redirect to subscription check
         return
-    
+        
     bot.send_message(
         msg.chat.id,
-        "ℹ️ *Дастурамали истифодаи бот:*\n\n"
-        "1️⃣ Барои пайдо кардани филм метавонед аз тугмаи 🔎 *Ҷустуҷӯи филм* истифода баред\n\n"
-        "2️⃣ Барои дидани филмҳои нав аз тугмаи 🎬 *Филмҳои нав* истифода баред\n\n"
-        "3️⃣ Агар ID-и филмро донед, онро бевосита ба бот нависед\n\n"
-        "4️⃣ Барои дидани омори худ аз тугмаи 📊 *Омори ман* истифода баред",
+        "ℹ️ *Дастури истифодаи бот:*\n\n"
+        "1️⃣ Барои тамошои филм метавонед аз тугмаи «🎬 Филмҳои нав» истифода баред.\n\n"
+        "2️⃣ Барои ҷустуҷӯи филм аз тугмаи «🔎 Ҷустуҷӯи филм» истифода баред.\n\n"
+        "3️⃣ Агар ID-и филмро медонед, онро ҳамчун матн равон кунед.\n\n"
+        "4️⃣ Барои дидани омори худ аз тугмаи «📊 Омори ман» истифода баред.\n\n"
+        "🔗 Ҳар як филм дорои пайванди махсус аст, ки онро метавонед ба дӯстон равон кунед.",
         parse_mode="Markdown"
     )
 
-# Қабули ID-и филм аз корбар
-@bot.message_handler(func=lambda msg: len(msg.text) == 4 and msg.text.isdigit())
-def get_movie_by_id(msg):
-    if not is_subscribed(msg.chat.id):
+# Ҷустуҷӯи филм аз рӯи номаш
+@bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == "waiting_for_search_query")
+def process_search(msg):
+    if msg.text == "🔙 Бозгашт ба меню":
+        user_states.pop(msg.chat.id)
         start(msg)
         return
+        
+    query = msg.text.lower()
     
-    movie_id = msg.text
+    # Поиск по названию фильма
+    results = []
+    for movie_id, movie_data in db["movies"].items():
+        title = movie_data.get("title", "").lower()
+        if query in title:
+            results.append((movie_id, movie_data))
     
-    if movie_id in db["movies"]:
-        movie_data = db["movies"][movie_id]
-        
-        # Зиёд кардани шумораи тамошо
-        db["movies"][movie_id]["views"] = movie_data.get("views", 0) + 1
-        db["stats"]["total_views"] += 1
-        
-        # Навсозии омори корбар
-        user_id = str(msg.from_user.id)
-        if user_id in db["users"]:
-            db["users"][user_id]["movies_watched"] = db["users"][user_id].get("movies_watched", 0) + 1
-        
-        save_db()
-        
-        # Тайёр кардани маълумот барои нишон додан
-        title = movie_data.get("title", "Бе ном")
-        info = movie_data.get("info", "Маълумот мавҷуд нест")
-        file_id = movie_data.get("file_id")
-        views = movie_data.get("views", 0)
-        
-        # Ҳисоб кардани давомнокӣ
-        duration = movie_data.get("duration", 0)
-        duration_min = int(duration / 60)
-        duration_sec = duration % 60
-        
-        # Нишон додани филм
-        caption = f"🎬 *{title}*\n\n"
-        caption += f"⏱ *Давомнокӣ:* {duration_min}:{duration_sec:02d}\n"
-        caption += f"👁 *Тамошоҳо:* {views}\n\n"
-        caption += f"📝 *Маълумот:*\n{info}"
-        
-        try:
-            bot.send_video(
-                msg.chat.id,
-                file_id,
-                caption=caption,
-                parse_mode="Markdown"
-            )
-        except Exception as e:
-            bot.send_message(
-                msg.chat.id,
-                f"❌ Хатогӣ ҳангоми фиристодани видео: {e}"
-            )
-    else:
+    if not results:
         bot.send_message(
             msg.chat.id,
-            f"❌ Филм бо ID {movie_id} ёфт нашуд.\n\n"
-            "Лутфан, ID-ро санҷед ва аз нав кӯшиш кунед."
+            "❌ Аз рӯи дархости шумо ягон филм ёфт нашуд.\n\n"
+            "Лутфан, дархости дигарро ворид кунед ё ба меню баргардед:"
         )
-
-# Барои дигар паёмҳо
-@bot.message_handler(func=lambda msg: True)
-def default_handler(msg):
-    if not is_subscribed(msg.chat.id):
-        start(msg)
         return
+        
+    # Создаем клавиатуру с результатами
+    markup = telebot.types.InlineKeyboardMarkup()
+    
+    for movie_id, movie_data in results:
+        title = movie_data.get("title", "Бе ном")
+        markup.add(telebot.types.InlineKeyboardButton(
+            f"🎬 {title}", 
+            callback_data=f"watch_{movie_id}"
+        ))
+    
+    # Добавляем кнопку "Назад"
+    markup.add(telebot.types.InlineKeyboardButton("🔙 Бекор кардан", callback_data="cancel_search"))
     
     bot.send_message(
-        msg.chat.id,
-        "❓ Лутфан, аз тугмаҳои зерин истифода баред ё ID-и филмро нависед."
+        msg.chat.id, 
+        f"🔎 Натиҷаҳои ҷустуҷӯ аз рӯи дархости \"{msg.text}\":",
+        reply_markup=markup
     )
-    # Webhook-ро насб мекунем
+
+# Обработчик для выбора фильма
+@bot.callback_query_handler(func=lambda call: call.data.startswith("watch_"))
+def watch_movie(call):
+    movie_id = call.data.split("_")[1]
+    
+    if is_subscribed(call.message.chat.id):
+        if movie_id in db["movies"]:
+            # Фиристодани филм
+            send_movie_to_user(call.message.chat.id, movie_id)
+            
+            # Удаляем сообщение с клавиатурой
+            try:
+                bot.delete_message(call.message.chat.id, call.message.message_id)
+            except:
+                pass
+        else:
+            bot.answer_callback_query(call.id, "❌ Бахшиш, филм ёфт нашуд.", show_alert=True)
+    else:
+        # Пересылаем на проверку подписки
+        start_msg = telebot.types.Message(
+            message_id=call.message.message_id,
+            from_user=call.from_user,
+            date=call.message.date,
+            chat=call.message.chat,
+            content_type='text',
+            options={},
+            json_string=''
+        )
+        start_msg.text = f"/start {movie_id}"
+        start(start_msg)
+
+# Отмена поиска
+@bot.callback_query_handler(func=lambda call: call.data == "cancel_search")
+def cancel_search(call):
+    user_states.pop(call.message.chat.id, None)
+    
+    try:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+    except:
+        pass
+        
+    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add("🎬 Филмҳои нав", "🔎 Ҷустуҷӯи филм")
+    markup.add("📊 Омори ман", "ℹ️ Дастурамал")
+    
+    bot.send_message(
+        call.message.chat.id,
+        "🔙 Ба меню баргаштем.",
+        reply_markup=markup
+    )
+
+# Обработка текстовых сообщений (ID фильма)
+@bot.message_handler(func=lambda msg: msg.text and msg.text.isdigit() and len(msg.text) == 4)
+def get_movie_by_id(msg):
+    movie_id = msg.text
+    
+    if is_subscribed(msg.chat.id):
+        if movie_id in db["movies"]:
+            send_movie_to_user(msg.chat.id, movie_id)
+        else:
+            bot.send_message(
+                msg.chat.id,
+                "❌ Филм бо чунин ID ёфт нашуд.\n\n"
+                "Лутфан, ID-ро санҷида, такроран кӯшиш кунед."
+            )
+    else:
+        # Пересылаем на проверку подписки
+        start_msg = telebot.types.Message(
+            message_id=msg.message_id,
+            from_user=msg.from_user,
+            date=msg.date,
+            chat=msg.chat,
+            content_type='text',
+            options={},
+            json_string=''
+        )
+        start_msg.text = f"/start {movie_id}"
+        start(start_msg)
+
+# Обработчик для остальных текстовых сообщений
+@bot.message_handler(func=lambda msg: True)
+def handle_message(msg):
+    if msg.text.startswith('/'):
+        bot.send_message(msg.chat.id, "❌ Дастур вуҷуд надорад.")
+    else:
+        if is_subscribed(msg.chat.id):
+            markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+            markup.add("🎬 Филмҳои нав", "🔎 Ҷустуҷӯи филм")
+            markup.add("📊 Омори ман", "ℹ️ Дастурамал")
+            
+            bot.send_message(
+                msg.chat.id,
+                "❓ Аз меню интихоб кунед ё ID-и филмро бинависед:",
+                reply_markup=markup
+            )
+        else:
+            start(msg)
+           # Webhook-ро насб мекунем
 bot.remove_webhook()
 bot.set_webhook(url=f"https://main-bot-7ydv.onrender.com/7105177180:AAGvw_qqid-VIVMwGMZIbo3L6cZCYQgj2DY")
 
